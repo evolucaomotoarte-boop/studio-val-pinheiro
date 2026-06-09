@@ -431,17 +431,26 @@ function AbaInicio({ atendimentos, salvar, servicos, usuario }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ABA CALENDÁRIO
+// ABA CALENDÁRIO — com adicionar retroativo + editar data
 // ══════════════════════════════════════════════════════════════════════════════
-function AbaCalendario({ atendimentos, salvar }) {
-  const [mesAtual, setMesAtual] = useState(()=>today().slice(0,7));
-  const [diaSel, setDiaSel] = useState(today);
+function AbaCalendario({ atendimentos, salvar, servicos }) {
+  const [mesAtual, setMesAtual]   = useState(()=>today().slice(0,7));
+  const [diaSel, setDiaSel]       = useState(today);
   const [editandoId, setEditandoId] = useState(null);
-  const [editForm, setEditForm] = useState({});
+  const [editForm, setEditForm]   = useState({});
+  // Adicionar atendimento retroativo
+  const [adicionando, setAdicionando] = useState(false);
+  const [addCat, setAddCat]       = useState("Básicos");
+  const [addSvc, setAddSvc]       = useState(null);
+  const [addValor, setAddValor]   = useState("");
+  const [addPag, setAddPag]       = useState("PIX");
+  const [addCliente, setAddCliente] = useState("");
+  const [addEtapa, setAddEtapa]   = useState(1); // 1=escolher serviço 2=confirmar
 
   const [ano, mes] = mesAtual.split("-").map(Number);
   const primeiroDia = new Date(ano,mes-1,1).getDay();
-  const diasNoMes = new Date(ano,mes,0).getDate();
+  const diasNoMes   = new Date(ano,mes,0).getDate();
+  const cats = [...new Set(servicos.map(s=>s.categoria))];
 
   function totalDia(d) { return atendimentos.filter(a=>a.data===d).reduce((s,a)=>s+a.valor,0); }
   const atendDiaSel = atendimentos.filter(a=>a.data===diaSel);
@@ -450,33 +459,67 @@ function AbaCalendario({ atendimentos, salvar }) {
   function navMes(delta) {
     const d = new Date(ano,mes-1+delta,1);
     const v = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-    setMesAtual(v);
-    setDiaSel(v+"-01");
+    setMesAtual(v); setDiaSel(v+"-01");
   }
 
+  function selecionarDia(dStr) {
+    setDiaSel(dStr);
+    setAdicionando(false);
+    setAddEtapa(1); setAddSvc(null); setAddValor(""); setAddCliente(""); setAddPag("PIX");
+    setEditandoId(null);
+  }
+
+  // ── Adicionar retroativo ────────────────────────────────────────────────────
+  function abrirAdicionar() { setAdicionando(true); setAddEtapa(1); setAddSvc(null); setAddValor(""); setAddCliente(""); setAddPag("PIX"); }
+
+  function escolherSvc(sv) {
+    setAddSvc(sv);
+    setAddValor(sv.preco>0 ? String(sv.preco) : "");
+    setAddEtapa(2);
+  }
+
+  function confirmarAdicao() {
+    const valor = parseFloat(String(addValor).replace(",","."));
+    if (!valor||valor<=0) { alert("Informe um valor válido."); return; }
+    const novo = {
+      id: Date.now(), data: diaSel,
+      servicoId: addSvc.id, servicoNome: addSvc.nome,
+      valor, formaPagamento: addPag,
+      cliente: addCliente.trim(), obs: "", categoria: addSvc.categoria,
+    };
+    salvar([novo, ...atendimentos]);
+    setAdicionando(false); setAddEtapa(1); setAddSvc(null); setAddValor(""); setAddCliente(""); setAddPag("PIX");
+  }
+
+  // ── Editar (inclui data) ────────────────────────────────────────────────────
   function iniciarEdicao(a) {
     setEditandoId(a.id);
-    setEditForm({ valor:String(a.valor), formaPagamento:a.formaPagamento||"PIX", cliente:a.cliente||"", obs:a.obs||"" });
+    setEditForm({ servicoNome:a.servicoNome, valor:String(a.valor), formaPagamento:a.formaPagamento||"PIX", cliente:a.cliente||"", obs:a.obs||"", data:a.data });
   }
 
   function salvarEdicao(id) {
     const valor = parseFloat(String(editForm.valor).replace(",","."));
-    if (!valor || valor <= 0) { alert("Valor inválido."); return; }
-    salvar(atendimentos.map(a => a.id===id ? {...a, valor, formaPagamento:editForm.formaPagamento, cliente:editForm.cliente, obs:editForm.obs} : a));
+    if (!valor||valor<=0) { alert("Valor inválido."); return; }
+    if (!editForm.data) { alert("Informe a data."); return; }
+    salvar(atendimentos.map(a => a.id===id ? {...a, valor, formaPagamento:editForm.formaPagamento, cliente:editForm.cliente, obs:editForm.obs, data:editForm.data, servicoNome:editForm.servicoNome} : a));
+    // se mudou a data, atualiza o dia selecionado para onde o atendimento foi
+    if (editForm.data !== diaSel) setDiaSel(editForm.data);
     setEditandoId(null);
   }
 
   function excluir(id) {
     if (!confirm("Excluir este atendimento?")) return;
-    salvar(atendimentos.filter(a => a.id !== id));
+    salvar(atendimentos.filter(a=>a.id!==id));
   }
 
-  // forma de pagamento totais do dia selecionado
   const pagDia = {};
   atendDiaSel.forEach(a=>{ const f=a.formaPagamento||"—"; pagDia[f]=(pagDia[f]||0)+a.valor; });
 
+  const isFuturo = diaSel > today();
+
   return (
     <div style={{ paddingBottom:100 }}>
+      {/* CALENDÁRIO */}
       <div style={S.card}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
           <button onClick={()=>navMes(-1)} style={{ ...S.btn.ghost, padding:"6px 14px", fontSize:22, lineHeight:1 }}>‹</button>
@@ -489,13 +532,13 @@ function AbaCalendario({ atendimentos, salvar }) {
         <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3 }}>
           {Array.from({length:primeiroDia}).map((_,i)=><div key={"e"+i}/>)}
           {Array.from({length:diasNoMes},(_,i)=>{
-            const dia = i+1;
+            const dia  = i+1;
             const dStr = `${ano}-${String(mes).padStart(2,"0")}-${String(dia).padStart(2,"0")}`;
-            const total = totalDia(dStr);
+            const total      = totalDia(dStr);
             const isSelected = dStr===diaSel;
-            const isToday = dStr===today();
+            const isToday    = dStr===today();
             return (
-              <button key={dia} onClick={()=>setDiaSel(dStr)} style={{ background:isSelected?C.gold:total>0?C.goldPale:"transparent", border:isToday?`2px solid ${C.gold}`:"2px solid transparent", borderRadius:8, padding:"6px 2px", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", minHeight:46, transition:"all 0.15s" }}>
+              <button key={dia} onClick={()=>selecionarDia(dStr)} style={{ background:isSelected?C.gold:total>0?C.goldPale:"transparent", border:isToday?`2px solid ${C.gold}`:"2px solid transparent", borderRadius:8, padding:"6px 2px", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", minHeight:46, transition:"all 0.15s" }}>
                 <span style={{ fontSize:14, color:isSelected?C.white:C.text, fontWeight:isToday||total>0?"bold":"normal" }}>{dia}</span>
                 {total>0 && <span style={{ fontSize:8, color:isSelected?C.goldPale:C.brownLight, marginTop:1 }}>{fmtCompact(total).replace("R$ ","")}</span>}
               </button>
@@ -504,66 +547,131 @@ function AbaCalendario({ atendimentos, salvar }) {
         </div>
       </div>
 
+      {/* PAINEL DO DIA SELECIONADO */}
       <div style={S.card}>
-        <p style={S.sectionTitle}>{dateLabel(diaSel)}</p>
-        {atendDiaSel.length===0
-          ? <p style={{ color:C.gray, fontStyle:"italic", fontSize:14 }}>Nenhum atendimento neste dia.</p>
-          : <>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
-                <span style={{ color:C.gray, fontSize:14 }}>{atendDiaSel.length} atendimento{atendDiaSel.length>1?"s":""}</span>
-                <span style={{ ...S.valorGold, fontSize:22 }}>{fmt(totalDiaSel)}</span>
-              </div>
-              {/* Formas de pagamento do dia */}
-              {Object.entries(pagDia).length > 0 && (
-                <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
-                  {Object.entries(pagDia).map(([f,v])=>(
-                    <div key={f} style={{ background:C.goldPale, borderRadius:10, padding:"6px 12px", textAlign:"center" }}>
-                      <p style={{ margin:0, fontSize:10, color:C.gray, letterSpacing:1 }}>{f}</p>
-                      <p style={{ margin:0, fontSize:15, fontWeight:"bold", color:C.brown }}>{fmt(v)}</p>
-                    </div>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+          <p style={{ ...S.sectionTitle, margin:0 }}>{dateLabel(diaSel)}</p>
+          {!isFuturo && !adicionando && (
+            <button onClick={abrirAdicionar} style={{ background:C.gold, color:C.white, border:"none", borderRadius:10, padding:"8px 16px", fontSize:13, cursor:"pointer", fontFamily:"inherit", fontStyle:"italic", fontWeight:"bold" }}>
+              + Adicionar
+            </button>
+          )}
+        </div>
+
+        {/* FORMULÁRIO DE ADICIONAR RETROATIVO */}
+        {adicionando && (
+          <div style={{ background:C.goldPale, borderRadius:12, padding:16, marginBottom:16, border:`1px solid ${C.gold}40` }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+              <p style={{ margin:0, fontSize:13, color:C.brown, fontWeight:"bold", fontStyle:"italic" }}>
+                {addEtapa===1 ? "Escolha o serviço" : addSvc?.nome}
+              </p>
+              <button onClick={()=>{ setAdicionando(false); setAddEtapa(1); }} style={{ background:"none", border:"none", cursor:"pointer", color:C.gray, fontSize:18, padding:4 }}>✕</button>
+            </div>
+
+            {addEtapa===1 && (
+              <>
+                <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:8, marginBottom:10 }}>
+                  {cats.map(c=>(
+                    <button key={c} onClick={()=>setAddCat(c)} style={{ ...S.pill(addCat===c), fontSize:11, padding:"6px 12px", flexShrink:0 }}>{c}</button>
                   ))}
                 </div>
-              )}
-              {atendDiaSel.map(a=>(
-                <div key={a.id} style={{ padding:"12px 0", borderBottom:`1px solid ${C.grayLight}` }}>
-                  {editandoId===a.id ? (
-                    <div style={{ background:C.cream, borderRadius:10, padding:12 }}>
-                      <p style={{ margin:"0 0 10px", fontSize:14, color:C.brown, fontStyle:"italic" }}>{a.servicoNome}</p>
-                      <label style={S.label}>Valor (R$)</label>
-                      <input style={{ ...S.input, fontSize:20, color:C.gold, fontWeight:"bold", marginBottom:12 }} type="number" value={editForm.valor} onChange={e=>setEditForm({...editForm,valor:e.target.value})} inputMode="decimal"/>
-                      <label style={S.label}>Forma de pagamento</label>
-                      <div style={{ display:"flex", gap:6, marginBottom:12 }}>
-                        {FORMAS_PAGAMENTO.map(f=>(
-                          <button key={f} onClick={()=>setEditForm({...editForm,formaPagamento:f})} style={{ ...S.pill(editForm.formaPagamento===f), flex:1, fontSize:12 }}>{f}</button>
-                        ))}
-                      </div>
-                      <label style={S.label}>Cliente</label>
-                      <input style={{ ...S.input, marginBottom:12 }} value={editForm.cliente} onChange={e=>setEditForm({...editForm,cliente:e.target.value})}/>
-                      <label style={S.label}>Observação</label>
-                      <input style={{ ...S.input, marginBottom:12 }} value={editForm.obs} onChange={e=>setEditForm({...editForm,obs:e.target.value})}/>
-                      <div style={{ display:"flex", gap:8 }}>
-                        <button onClick={()=>salvarEdicao(a.id)} style={{ ...S.btn.primary, fontSize:13, padding:"10px" }}>✓ Salvar</button>
-                        <button onClick={()=>setEditandoId(null)} style={{ ...S.btn.ghost, padding:"10px 14px" }}>Cancelar</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
-                      <div style={{ flex:1 }}>
-                        <p style={{ margin:0, fontSize:15, color:C.text, fontWeight:"bold" }}>{a.servicoNome}</p>
-                        <div style={{ display:"flex", gap:6, marginTop:4 }}>
-                          {a.formaPagamento && <span style={{ fontSize:11, background:C.goldPale, color:C.brownLight, borderRadius:10, padding:"2px 8px" }}>{a.formaPagamento}</span>}
-                          {a.cliente && <span style={{ fontSize:11, color:C.gray }}>{a.cliente}</span>}
-                        </div>
-                      </div>
-                      <span style={{ ...S.valorGold, fontSize:18 }}>{fmt(a.valor)}</span>
-                      <button onClick={()=>iniciarEdicao(a)} style={{ background:"none", border:"none", cursor:"pointer", color:C.gray, padding:4, fontSize:16 }}>✎</button>
-                      <button onClick={()=>excluir(a.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"#C0392B", padding:4, fontSize:16 }}>🗑</button>
-                    </div>
-                  )}
+                <div style={{ maxHeight:220, overflowY:"auto" }}>
+                  {servicos.filter(s=>s.categoria===addCat).map(sv=>(
+                    <button key={sv.id} onClick={()=>escolherSvc(sv)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", width:"100%", padding:"11px 8px", background:C.white, border:"none", borderBottom:`1px solid ${C.grayLight}`, cursor:"pointer", fontFamily:"inherit", borderRadius:0 }}>
+                      <span style={{ fontSize:14, color:C.text, textAlign:"left" }}>{sv.nome}</span>
+                      <span style={{ fontSize:14, color:C.gold, fontWeight:"bold", fontStyle:"italic", minWidth:70, textAlign:"right" }}>
+                        {sv.precoLivre?"variável":fmt(sv.preco)}
+                      </span>
+                    </button>
+                  ))}
                 </div>
-              ))}
-            </>
-        }
+              </>
+            )}
+
+            {addEtapa===2 && addSvc && (
+              <>
+                <button onClick={()=>setAddEtapa(1)} style={{ ...S.btn.ghost, padding:"6px 12px", fontSize:12, marginBottom:14, width:"auto" }}>← Voltar</button>
+                <label style={S.label}>Valor (R$)</label>
+                <input style={{ ...S.input, fontSize:22, color:C.gold, fontWeight:"bold", marginBottom:14 }} type="number" value={addValor} onChange={e=>setAddValor(e.target.value)} placeholder="0,00" inputMode="decimal" autoFocus/>
+                <label style={S.label}>Forma de pagamento</label>
+                <div style={{ display:"flex", gap:6, marginBottom:14 }}>
+                  {FORMAS_PAGAMENTO.map(f=>(
+                    <button key={f} onClick={()=>setAddPag(f)} style={{ ...S.pill(addPag===f), flex:1, textAlign:"center", fontSize:13 }}>{f}</button>
+                  ))}
+                </div>
+                <label style={S.label}>Cliente (opcional)</label>
+                <input style={{ ...S.input, marginBottom:14 }} value={addCliente} onChange={e=>setAddCliente(e.target.value)} placeholder="Nome da cliente / aluna"/>
+                <button onClick={confirmarAdicao} style={S.btn.primary}>✓ Registrar em {dateLabelShort(diaSel)}</button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* LISTA DE ATENDIMENTOS DO DIA */}
+        {atendDiaSel.length===0 && !adicionando && (
+          <p style={{ color:C.gray, fontStyle:"italic", fontSize:14 }}>Nenhum atendimento neste dia. Toque em "+ Adicionar" para registrar.</p>
+        )}
+
+        {atendDiaSel.length>0 && (
+          <>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+              <span style={{ color:C.gray, fontSize:14 }}>{atendDiaSel.length} atendimento{atendDiaSel.length>1?"s":""}</span>
+              <span style={{ ...S.valorGold, fontSize:22 }}>{fmt(totalDiaSel)}</span>
+            </div>
+            {Object.entries(pagDia).length>0 && (
+              <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
+                {Object.entries(pagDia).map(([f,v])=>(
+                  <div key={f} style={{ background:C.goldPale, borderRadius:10, padding:"6px 12px", textAlign:"center" }}>
+                    <p style={{ margin:0, fontSize:10, color:C.gray, letterSpacing:1 }}>{f}</p>
+                    <p style={{ margin:0, fontSize:15, fontWeight:"bold", color:C.brown }}>{fmt(v)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {atendDiaSel.map(a=>(
+              <div key={a.id} style={{ padding:"12px 0", borderBottom:`1px solid ${C.grayLight}` }}>
+                {editandoId===a.id ? (
+                  <div style={{ background:C.cream, borderRadius:10, padding:14 }}>
+                    <label style={S.label}>Serviço</label>
+                    <input style={{ ...S.input, marginBottom:12 }} value={editForm.servicoNome} onChange={e=>setEditForm({...editForm,servicoNome:e.target.value})}/>
+                    <label style={S.label}>Valor (R$)</label>
+                    <input style={{ ...S.input, fontSize:22, color:C.gold, fontWeight:"bold", marginBottom:12 }} type="number" value={editForm.valor} onChange={e=>setEditForm({...editForm,valor:e.target.value})} inputMode="decimal"/>
+                    <label style={S.label}>Forma de pagamento</label>
+                    <div style={{ display:"flex", gap:6, marginBottom:12 }}>
+                      {FORMAS_PAGAMENTO.map(f=>(
+                        <button key={f} onClick={()=>setEditForm({...editForm,formaPagamento:f})} style={{ ...S.pill(editForm.formaPagamento===f), flex:1, fontSize:12 }}>{f}</button>
+                      ))}
+                    </div>
+                    <label style={S.label}>Cliente</label>
+                    <input style={{ ...S.input, marginBottom:12 }} value={editForm.cliente} onChange={e=>setEditForm({...editForm,cliente:e.target.value})}/>
+                    <label style={S.label}>Observação</label>
+                    <input style={{ ...S.input, marginBottom:12 }} value={editForm.obs} onChange={e=>setEditForm({...editForm,obs:e.target.value})}/>
+                    <label style={S.label}>📅 Data do atendimento</label>
+                    <input style={{ ...S.input, marginBottom:14, fontSize:16 }} type="date" value={editForm.data} onChange={e=>setEditForm({...editForm,data:e.target.value})} max={today()}/>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button onClick={()=>salvarEdicao(a.id)} style={{ ...S.btn.primary, fontSize:13, padding:"11px" }}>✓ Salvar</button>
+                      <button onClick={()=>setEditandoId(null)} style={{ ...S.btn.ghost, padding:"11px 14px" }}>Cancelar</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
+                    <div style={{ flex:1 }}>
+                      <p style={{ margin:0, fontSize:15, color:C.text, fontWeight:"bold" }}>{a.servicoNome}</p>
+                      <div style={{ display:"flex", gap:6, marginTop:4, flexWrap:"wrap" }}>
+                        {a.formaPagamento && <span style={{ fontSize:11, background:C.goldPale, color:C.brownLight, borderRadius:10, padding:"2px 8px" }}>{a.formaPagamento}</span>}
+                        {a.cliente && <span style={{ fontSize:11, color:C.gray }}>{a.cliente}</span>}
+                        {a.data!==diaSel && <span style={{ fontSize:11, color:"#C0392B", background:"#FDECEA", borderRadius:10, padding:"2px 8px" }}>⚠️ {dateLabelShort(a.data)}</span>}
+                      </div>
+                    </div>
+                    <span style={{ ...S.valorGold, fontSize:18 }}>{fmt(a.valor)}</span>
+                    <button onClick={()=>iniciarEdicao(a)} style={{ background:"none", border:"none", cursor:"pointer", color:C.gray, padding:4, fontSize:18 }}>✎</button>
+                    <button onClick={()=>excluir(a.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"#C0392B", padding:4, fontSize:18 }}>🗑</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );
@@ -1059,7 +1167,7 @@ export default function App() {
       </nav>
       <div>
         {aba==="inicio" && <AbaInicio atendimentos={atendimentos} salvar={salvarAtendimentos} servicos={servicos} usuario={usuario}/>}
-        {aba==="calendario" && <AbaCalendario atendimentos={atendimentos} salvar={salvarAtendimentos}/>}
+        {aba==="calendario" && <AbaCalendario atendimentos={atendimentos} salvar={salvarAtendimentos} servicos={servicos}/>}
         {aba==="relatorios" && <AbaRelatorios atendimentos={atendimentos}/>}
         {aba==="config" && <AbaConfig servicos={servicos} salvarServicos={salvarServicos} atendimentos={atendimentos} salvarAtendimentos={salvarAtendimentos} onLogout={logout} usuario={usuario}/>}
       </div>
